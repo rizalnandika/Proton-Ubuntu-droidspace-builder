@@ -94,11 +94,16 @@ EOF
   # wayland-scanner (alat BUILD yang jalan di mesin host x86_64 untuk
   # mengolah XML protokol Wayland dari source Wine). libwayland-dev
   # TIDAK berisi binary itu — di v1 scanner tidak terpasang.
+  # libfreetype-dev HOST juga wajib: configure build tools native
+  # (x86_64) menolak jalan tanpa FreeType 64-bit. Di Colab paket ini
+  # sudah terpasang dari sananya jadi tidak terasa; di Ubuntu bersih
+  # (GitHub runner) tidak ada — run Actions #1 gagal persis di sini
+  # (22 Nov 2026).
   sudo apt-get install -y --no-install-recommends \
     build-essential git wget curl xz-utils zip pkg-config python3 \
     flex bison gettext autoconf automake libtool \
     gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-    cmake ninja-build libwayland-dev libwayland-bin wayland-protocols \
+    cmake ninja-build libfreetype-dev libwayland-dev libwayland-bin wayland-protocols \
     || { echo "install paket dasar gagal"; exit 1; }
   command -v wayland-scanner >/dev/null 2>&1 || {
     echo "ERROR: wayland-scanner tidak ditemukan di PATH host — winewayland tidak akan ter-build"; exit 1; }
