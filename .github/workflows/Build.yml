@@ -1,0 +1,46 @@
+name: Build Proton ARM64EC
+
+# Jalan manual saja: tab Actions -> Run workflow.
+on:
+  workflow_dispatch:
+
+# Perlu buat menerbitkan hasil build sebagai Release.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350   # batas keras GitHub 360 menit; berhenti rapi sebelum itu
+    steps:
+      - name: Ambil isi repo
+        uses: actions/checkout@v4
+
+      - name: Bebaskan ruang disk
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /opt/hostedtoolcache
+          sudo docker image prune --all --force || true
+          df -h /
+
+      - name: Siapkan /content + build.sh (JOBS naik ke 4)
+        run: |
+          sudo mkdir -p /content
+          sudo chown "$USER:$USER" /content
+          cp build_proton_arm64ec_colab_v2.sh build.sh
+          sed -i 's/^JOBS=3/JOBS=4/' build.sh
+          grep -n '^JOBS=' build.sh
+
+      - name: Build semua fase
+        run: bash build.sh all
+
+      - name: Terbitkan hasil sebagai Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -lh /content/*.zip
+          gh release create "build-${{ github.run_number }}" \
+            /content/Proton-ARM64EC-Custom-Ubuntu.zip \
+            /content/Proton-ARM64EC-Tools-Ubuntu.zip \
+            --title "Proton ARM64EC build #${{ github.run_number }}" \
+            --notes "Hasil build otomatis GitHub Actions (script v2, JOBS=4)."
