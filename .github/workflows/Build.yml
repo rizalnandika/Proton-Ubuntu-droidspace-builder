@@ -31,7 +31,45 @@ jobs:
           sed -i 's/^JOBS=3/JOBS=4/' build.sh
           grep -n '^JOBS=' build.sh
 
+      # Cache 1 — HASIL JADI: zip final disimpan apa adanya.
+      # Kuncinya = isi script build. Selama script TIDAK berubah, run
+      # berikutnya mengambil zip ini dan langsung lompat ke Release
+      # (build dilewati total, selesai dalam hitungan menit) — persis
+      # untuk kasus seperti run #3: build sukses, cuma langkah
+      # Release-nya yang gagal, tidak perlu compile ulang 24 menit.
+      # Kalau script berubah, kunci berubah -> cache kosong -> build
+      # penuh, lalu zip baru disimpan dengan kunci baru.
+      - name: Cache hasil jadi (zip final)
+        id: cache-hasil
+        uses: actions/cache@v4
+        with:
+          path: /content/Proton-ARM64EC-Custom-Ubuntu.zip
+          key: proton-hasil-${{ hashFiles('build_proton_arm64ec_colab_v2.sh') }}
+
+      # Cache 2 — SUMBER & UNDUHAN MAHAL: dipakai hanya bila build
+      # memang jalan. Script sudah punya penjaga "sudah ada, lewati"
+      # untuk tarball toolchain, clone wine-src dan clone fex-src,
+      # jadi yang dipulihkan di sini tidak diunduh/diclone ulang.
+      # Stamp SENGAJA tidak ikut disimpan: fase tetap jalan dan
+      # memeriksa isinya sendiri, jadi tidak ada fase yang keliru
+      # terlewat karena stamp-nya ada tapi isinya tidak.
+      - name: Cache sumber (toolchain, source, sysroot, deb)
+        if: steps.cache-hasil.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            /content/toolchain
+            /content/sysroot-arm64
+            /content/build-proton-arm64ec/llvm-mingw.tar.xz
+            /content/build-proton-arm64ec/wine-src
+            /content/build-proton-arm64ec/fex-src
+            /content/build-proton-arm64ec/apt-cache
+          key: proton-sumber-${{ hashFiles('build_proton_arm64ec_colab_v2.sh') }}
+          restore-keys: |
+            proton-sumber-
+
       - name: Build semua fase
+        if: steps.cache-hasil.outputs.cache-hit != 'true'
         run: bash build.sh all
 
       - name: Terbitkan hasil sebagai Release
@@ -41,6 +79,5 @@ jobs:
           ls -lh /content/*.zip
           gh release create "build-${{ github.run_number }}" \
             /content/Proton-ARM64EC-Custom-Ubuntu.zip \
-            /content/Proton-ARM64EC-Tools-Ubuntu.zip \
             --title "Proton ARM64EC build #${{ github.run_number }}" \
             --notes "Hasil build otomatis GitHub Actions (script v2, JOBS=4)."
