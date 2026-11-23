@@ -149,7 +149,8 @@ EOF
   # Fail-fast: symlink .so dev TIDAK boleh menggantung — target runtime-nya
   # (libfreetype.so.6, libz.so.1, libdbus-1.so.3) harus ikut ada di sysroot.
   for so in libfreetype.so.6 libz.so.1 libdbus-1.so.3 libgnutls.so.30 libOpenCL.so.1 \
-            libwayland-client.so.0 libxkbcommon.so.0 libxkbregistry.so.0; do
+            libwayland-client.so.0 libxkbcommon.so.0 libxkbregistry.so.0 \
+            libX11.so.6 libXext.so.6 libXxf86vm.so.1 libXrandr.so.2 libXfixes.so.3; do
     [ -e "$SYSROOT/usr/lib/aarch64-linux-gnu/$so" ] || {
       echo "ERROR: $so tidak ada di sysroot — resolver cross belum lengkap"; exit 1; }
   done
@@ -181,6 +182,11 @@ EOF
   # Wayland TANPA error — jadi gagal di sini saja, dengan pesan jelas.
   aarch64-linux-gnu-pkg-config --modversion wayland-client xkbcommon xkbregistry >/dev/null 2>&1 || {
     echo "ERROR: .pc Wayland target belum lengkap di sysroot (wayland-client / xkbcommon / xkbregistry)"; exit 1; }
+  # Probe X11 target: pola yang sama — tanpa .pc ini configure melewatkan
+  # winex11 diam-diam (terbukti di run GitHub #4, 23 Nov 2026: build
+  # "sukses" tapi winex11.so/.drv tidak ada sama sekali di paket).
+  aarch64-linux-gnu-pkg-config --modversion x11 xext xxf86vm >/dev/null 2>&1 || {
+    echo "ERROR: .pc X11 target belum lengkap di sysroot (x11 / xext / xxf86vm) — winex11 akan dilewatkan configure"; exit 1; }
   echo "deps OK: sysroot arm64 siap, pkg-config membaca freetype2 versi $(aarch64-linux-gnu-pkg-config --modversion freetype2)"
   echo "deps OK: Wayland target siap — wayland-client $(aarch64-linux-gnu-pkg-config --modversion wayland-client), xkbregistry $(aarch64-linux-gnu-pkg-config --modversion xkbregistry), scanner host: $(command -v wayland-scanner)"
   stamp deps
@@ -324,6 +330,15 @@ fase_wine() {
   # SEBELUM menempelkan sysroot, jadi X11_CFLAGS keluar kosong dan header
   # X yang hanya ada di sysroot (XInput2.h, xf86vmode.h) tidak ketemu.
   export PKG_CONFIG_SYSTEM_INCLUDE_PATH="$SYSROOT/usr/include"
+  # CPATH: tes header configure berjalan TANPA -I sysroot (bukti dari
+  # config.log run v2 di Colab 22 Nov 2026: perintah tesnya polos
+  # "aarch64-linux-gnu-gcc -c -g -O2 conftest.c"), jadi makro HAVE_X11_*
+  # tidak ter-set dan -I sysroot tidak masuk ke rule compile winex11 —
+  # patch force-include xf86vmode.h lalu gagal "file not found" padahal
+  # header-nya ADA di sysroot. CPATH memberi jalur include itu ke semua
+  # compile sisi unix, tanpa reconfigure dan tanpa rebuild massal
+  # (make hanya meng-compile obyek yang belum jadi).
+  export CPATH="$SYSROOT/usr/include${CPATH:+:$CPATH}"
   mkdir -p build-aarch64 && cd build-aarch64
   if [ ! -f Makefile ]; then
     # LDFLAGS wajib, dua pelajaran:
@@ -343,6 +358,7 @@ fase_wine() {
       --with-wine-tools="$WORK/build-tools" \
       --enable-archs=arm64ec,aarch64,i386 \
       --with-mingw=clang \
+      --with-x \
       --disable-tests \
       --prefix="$PREFIX" \
       || { echo "configure wine gagal — lihat config.log tail di bawah"; \
@@ -359,6 +375,14 @@ fase_wine() {
     echo "       Fase deps v2 seharusnya menangkapnya lebih dulu — laporkan baris ini."
     exit 1
   fi
+  # Gerbang X11 #1: nasib winex11 di run GitHub #4 — configure
+  # melewatkannya TANPA pesan gagal, paket jadi Wayland-only. Makefile
+  # modul hanya dibuat configure bila drivernya diaktifkan, jadi
+  # keberadaan file ini bukti paling langsung.
+  [ -f dlls/winex11.drv/Makefile ] || {
+    echo "ERROR: winex11.drv TIDAK masuk daftar build (Makefile modul tidak dibuat configure)."
+    echo "       Cek config.log untuk baris X11, dan probe pkg-config x11 di fase deps."
+    exit 1; }
   # Make bisa berhenti di "No rule to make target '<tree-tools>/...'" bila
   # ada alat host yang belum dibangun di tree tools: ekstrak daftar lengkap
   # referensinya dari Makefile ini, bangun di tree tools, lalu make ulang.
@@ -388,8 +412,13 @@ fase_wine() {
     echo "ERROR: winewayland.so TIDAK ada di hasil install — driver Wayland tidak ter-build"; exit 1; }
   ls "$PREFIX/lib/wine/aarch64-windows/winewayland.drv" >/dev/null 2>&1 || {
     echo "ERROR: winewayland.drv TIDAK ada di hasil install — driver Wayland tidak ter-build"; exit 1; }
+  ls "$PREFIX/lib/wine/aarch64-unix/winex11.so" >/dev/null 2>&1 || {
+    echo "ERROR: winex11.so TIDAK ada di hasil install — driver X11 tidak ter-build"; exit 1; }
+  ls "$PREFIX/lib/wine/aarch64-windows/winex11.drv" >/dev/null 2>&1 || {
+    echo "ERROR: winex11.drv TIDAK ada di hasil install — driver X11 tidak ter-build"; exit 1; }
   echo "wine OK: ELF aarch64 + DLL PE terpasang di $PREFIX"
   echo "wine OK: winewayland.so + winewayland.drv IKUT ter-build (driver Wayland tersedia)"
+  echo "wine OK: winex11.so + winex11.drv IKUT ter-build (driver X11 tersedia)"
   stamp wine
 }
 
