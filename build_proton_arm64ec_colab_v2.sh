@@ -435,6 +435,12 @@ fase_fex() {
   done_stamp fex && { echo "fex: sudah, lewati"; return; }
   done_stamp wine || { echo "fase wine belum selesai"; exit 1; }
   log "FASE fex — build FEX $FEX_TAG (arm64ec + wow64)"
+  # CPATH dari fase wine TIDAK boleh bocor ke sini: clang mingw akan membaca
+  # header glibc dari sysroot (stdint.h/limits.h) mendahului header mingw-nya
+  # sendiri, lalu mati di 'bits/libc-header-start.h' yang tidak terjangkau
+  # CPATH — persis kegagalan run #7 (2026-11-23, FEX arm64ec FAILED di awal
+  # build). CPATH hanya kebutuhan configure Wine.
+  unset CPATH
   cd "$WORK"
   if [ ! -d fex-src ]; then
     git clone --recursive --depth 1 -b "$FEX_TAG" https://github.com/FEX-Emu/FEX fex-src \
@@ -485,6 +491,9 @@ fase_box64() {
   done_stamp box64 && { echo "box64: sudah, lewati"; return; }
   done_stamp fex || { echo "fase fex belum selesai"; exit 1; }
   log "FASE box64 — build Box64 $BOX64_TAG (wowbox64.dll saja)"
+  # Sama seperti fase fex: sub-build wow64 memakai clang mingw, jadi CPATH
+  # warisan fase wine wajib dibuang dulu (kasus run #7).
+  unset CPATH
   cd "$WORK"
   if [ ! -d box64-src ]; then
     git clone --recursive --depth 1 -b "$BOX64_TAG" https://github.com/ptitSeb/box64 box64-src \
