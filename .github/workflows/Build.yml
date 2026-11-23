@@ -48,7 +48,7 @@ jobs:
 
       # Cache 2 — SUMBER & UNDUHAN MAHAL: dipakai hanya bila build
       # memang jalan. Script sudah punya penjaga "sudah ada, lewati"
-      # untuk tarball toolchain, clone wine-src dan clone fex-src,
+      # untuk tarball toolchain, clone wine-src, fex-src dan box64-src,
       # jadi yang dipulihkan di sini tidak diunduh/diclone ulang.
       # Stamp SENGAJA tidak ikut disimpan: fase tetap jalan dan
       # memeriksa isinya sendiri, jadi tidak ada fase yang keliru
@@ -63,6 +63,7 @@ jobs:
             /content/build-proton-arm64ec/llvm-mingw.tar.xz
             /content/build-proton-arm64ec/wine-src
             /content/build-proton-arm64ec/fex-src
+            /content/build-proton-arm64ec/box64-src
             /content/build-proton-arm64ec/apt-cache
           key: proton-sumber-${{ hashFiles('build_proton_arm64ec_colab_v2.sh') }}
           restore-keys: |
