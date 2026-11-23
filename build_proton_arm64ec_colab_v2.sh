@@ -8,6 +8,7 @@
 #   Wine      : ValveSoftware/wine branch proton_11.0 (wine-nya Proton 11.0-1)
 #   Toolchain : bylaws/llvm-mingw 20250920 (ucrt-ubuntu-22.04-x86_64)
 #   FEX       : FEX-Emu/FEX tag FEX-2611
+#   Box64     : ptitSeb/box64 tag v0.4.4 (hanya wowbox64.dll, build sendiri)
 #
 # Sifat script (pelajaran dari build Turnip):
 #   - Per fase ada STAMP: menjalankan ulang script MELANJUTKAN, bukan dari nol.
@@ -15,7 +16,7 @@
 #   - Fail-fast di titik yang diketahui rawan, dengan pesan yang jelas.
 #
 # Pakai:  bash build_proton_arm64ec_colab_v1.sh [fase]
-#   fase: deps|toolchain|wine-tools|wine|fex|package|all   (default: all)
+#   fase: deps|toolchain|wine-tools|wine|fex|box64|package|all   (default: all)
 #
 # VERSI FINAL KONSOLIDASI (2026-11-20): semua perbaikan dari sesi build
 # pertama sudah tertanam — sysroot resolver state kosong, LDFLAGS
@@ -45,6 +46,7 @@ STAMPS="$WORK/stamps"
 TC_DIR=/content/toolchain/llvm-mingw
 WINE_BRANCH=proton_11.0
 FEX_TAG=FEX-2611
+BOX64_TAG=v0.4.4
 JOBS=3   # Colab free ~12GB RAM: 3 job aman, jangan nproc penuh (OOM risiko)
 
 mkdir -p "$WORK" "$STAMPS" "$PREFIX"
@@ -473,16 +475,66 @@ fase_fex() {
   stamp fex
 }
 
+# ------------------------------ fase: box64 --------------------------------
+# Build SENDIRI wowbox64.dll dari source Box64 (bukan ambil dari Hangover).
+# DLL ini emulator x86 32-bit alternatif untuk slot Wow64\x86 — terbukti di
+# HP 2026-11-23: Limbo 59.9 FPS di wowbox64 vs 3-7 FPS di libwow64fex.
+# Slot 64-bit tetap FEX: Box64 belum merilis DLL ARM64EC (di tag v0.4.4
+# folder wine/box64ec belum ada; baru muncul di main sesudahnya).
+fase_box64() {
+  done_stamp box64 && { echo "box64: sudah, lewati"; return; }
+  done_stamp fex || { echo "fase fex belum selesai"; exit 1; }
+  log "FASE box64 — build Box64 $BOX64_TAG (wowbox64.dll saja)"
+  cd "$WORK"
+  if [ ! -d box64-src ]; then
+    git clone --recursive --depth 1 -b "$BOX64_TAG" https://github.com/ptitSeb/box64 box64-src \
+      || { echo "clone Box64 gagal"; exit 1; }
+  fi
+  cd box64-src
+  WINEDLLDIR="$PREFIX/lib/wine/aarch64-windows"
+  # Resep resmi dari repo Box64 sendiri: CMake utama dengan -DARM64=ON
+  # (menyalakan ARM_DYNAREC) + -DWOW64=ON membuat ExternalProject "wowbox64"
+  # yang meng-compile wine/wow64/ memakai wine/toolchain_mingw.cmake
+  # (aarch64-w64-mingw32-clang dari llvm-mingw kita; PATH sudah di-export
+  # di badan script). Binary Linux Box64-nya TIDAK ikut dibangun — hanya
+  # target wowbox64. Compiler aarch64-linux-gnu dari fase deps dipakai
+  # CMake utama untuk menyusun daftar source dynarec yang diteruskan ke
+  # sub-build wow64.
+  mkdir -p build && cd build
+  CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++ \
+  cmake -GNinja -DARM64=ON -DWOW64=ON -DCMAKE_BUILD_TYPE=Release .. \
+    || { echo "cmake Box64 gagal"; exit 1; }
+  # Gerbang fail-fast: target wowbox64 HARUS sudah ada sebelum build jalan,
+  # supaya konfigurasi yang keliru gagal dalam semenit, bukan belakangan.
+  ninja -t targets all 2>/dev/null | grep -q '^wowbox64:' || {
+    echo "ERROR: target wowbox64 tidak dibuat CMake (WOW64/ARM_DYNAREC tidak aktif)"; exit 1; }
+  ninja -j"$JOBS" wowbox64 || { echo "ninja wowbox64 gagal — jalankan ulang untuk resume"; exit 1; }
+  WOWDLL=$(find "$PWD" -name 'wowbox64.dll' -type f | head -1)
+  [ -n "$WOWDLL" ] || { echo "ERROR: wowbox64.dll tidak ditemukan di hasil build Box64"; exit 1; }
+  cp -f "$WOWDLL" "$WINEDLLDIR/wowbox64.dll"
+  echo "wowbox64.dll: $(file "$WINEDLLDIR/wowbox64.dll")"
+  cd "$WORK"
+  stamp box64
+}
+
 # ----------------------------- fase: package -------------------------------
 fase_package() {
   done_stamp fex || { echo "fase fex belum selesai"; exit 1; }
+  done_stamp box64 || { echo "fase box64 belum selesai"; exit 1; }
   log "FASE package — zip hasil build"
   cat > "$PREFIX/README-INSTAL.txt" <<'EOF'
-Hasil build sendiri: Wine basis Proton 11.0 (ARM64EC) + FEX 2611, target Ubuntu glibc aarch64.
+Hasil build sendiri: Wine basis Proton 11.0 (ARM64EC) + FEX 2611 + Box64 v0.4.4 (wowbox64.dll), target Ubuntu glibc aarch64.
 Pasang di DroidSpaces: ekstrak ke ~/proton-arm64ec, lalu:
   export PATH=$HOME/proton-arm64ec/bin:$PATH
-Pemilih emulator: registry HKLM\Software\Microsoft\Wow64\amd64 = libarm64ecfex.dll
-(atau HODLL64/HODLL bila source mendukung). Env game: FEX_TSOENABLED=1 FEX_MULTIBLOCK=1.
+Pemilih emulator (registry prefix):
+  HKLM\Software\Microsoft\Wow64\amd64 = libarm64ecfex.dll  (FEX, 64-bit)
+  HKLM\Software\Microsoft\Wow64\x86   = wowbox64.dll       (Box64 build sendiri, 32-bit)
+                                      atau libwow64fex.dll (FEX, cadangan 32-bit)
+CATATAN wowbox64.dll: selain di lib/wine/aarch64-windows, DLL ini WAJIB
+disalin juga ke drive_c/windows/system32 di dalam prefix — loader wow64
+mencari DLL emulator non-FEX dari system32 (terbukti 2026-11-23; tanpa itu
+gagal load c0000135). Limbo (32-bit) terbukti 59.9 FPS di wowbox64,
+3-7 FPS di libwow64fex. Env game: FEX_TSOENABLED=1 FEX_MULTIBLOCK=1.
 Driver grafis: winex11 (bawaan, lewat XWayland) + winewayland (BARU di build v2).
 Tes Wayland per game dari terminal di dalam sesi Plasma: DISPLAY= wine <game.exe>
 JANGAN set registry Graphics=wayland secara permanen: desktop virtual
@@ -516,8 +568,9 @@ case "${1:-all}" in
   wine-tools) fase_wine_tools ;;
   wine)       fase_wine ;;
   fex)        fase_fex ;;
+  box64)      fase_box64 ;;
   package)    fase_package ;;
-  all)        fase_deps; fase_toolchain; fase_wine_tools; fase_wine; fase_fex; fase_package ;;
+  all)        fase_deps; fase_toolchain; fase_wine_tools; fase_wine; fase_fex; fase_box64; fase_package ;;
   *) echo "fase tidak dikenal: $1"; exit 1 ;;
 esac
 echo; echo "Script selesai (fase: ${1:-all}). Stamp tersimpan di $STAMPS"
