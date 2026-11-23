@@ -352,6 +352,11 @@ fase_wine() {
     #    ("C compiler cannot create executables"). Libc yang benar untuk
     #    link adalah milik cross-compiler; sysroot hanya untuk library
     #    tambahan (freetype, png, dst).
+    # --without-opencl: modul OpenCL paling rapuh di build ini
+    # (pernah bermasalah di Colab 20 Nov 2026; di run GitHub #5 header
+    # CL/cl.h KETEMU tapi OPENCL_LIBS kosong, jadi link opencl.so mati
+    # dengan ratusan undefined reference cl*). Tidak dipakai game DXVK,
+    # jadi matikan saja supaya deterministik.
     ../wine-src/configure \
       LDFLAGS="-L/usr/aarch64-linux-gnu/lib -L$SYSROOT/usr/lib/aarch64-linux-gnu -Wl,--rpath-link,$SYSROOT/usr/lib/aarch64-linux-gnu -Wl,--rpath-link,/usr/aarch64-linux-gnu/lib" \
       --host=aarch64-linux-gnu \
@@ -359,6 +364,7 @@ fase_wine() {
       --enable-archs=arm64ec,aarch64,i386 \
       --with-mingw=clang \
       --with-x \
+      --without-opencl \
       --disable-tests \
       --prefix="$PREFIX" \
       || { echo "configure wine gagal — lihat config.log tail di bawah"; \
